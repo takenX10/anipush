@@ -3,9 +3,7 @@
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 # ======= CONFIG =======
-BASE_PATH="/opt/anipush"
-ENV_FILE="$BASE_PATH/.env"
-DB_PATH="$BASE_PATH/bot.db"
+ENV_FILE="/opt/anipush/.env"
 RCLONE_REMOTE="pclouddb:anipush_backups"
 BACKUP_NAME="anipush_backup_$TIMESTAMP.db"
 # ==============================
@@ -15,6 +13,7 @@ ENCRYPTED_NAME="$BACKUP_NAME.gpg"
 ENCRYPTED_PATH="$BACKUP_DIR/$ENCRYPTED_NAME"
 GPG_PASSPHRASE=$(grep "^GPG_PASSPHRASE" "$ENV_FILE" | sed -E "s/^GPG_PASSPHRASE *= *[\"'](.*)[\"']/\1/")
 HEALTHCHECK_ID= https://hc-ping.com/$(grep "^HEALTHCHECK_ID" "$ENV_FILE" | sed -E "s/^HEALTHCHECK_ID *= *[\"'](.*)[\"']/\1/")
+DB_PATH=$(grep "^DATABASE_PATH" "$ENV_FILE" | sed -E "s/^DATABASE_PATH *= *[\"'](.*)[\"']/\1/")
 
 mkdir -p "$BACKUP_DIR"
 

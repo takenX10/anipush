@@ -1,3 +1,4 @@
 temp
 .env
 bot.db
+src/__pycache__
