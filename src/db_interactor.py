@@ -1,9 +1,8 @@
 import sqlite3
 import custom_config
 from custom_logging import set_logger
-import logging
 
-log = set_logger("DATABASE_INTERACTOR", logging.DEBUG)
+log = set_logger("DATABASE_INTERACTOR")
 
 
 def add_column(table_name, column_name, column_type):

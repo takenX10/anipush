@@ -51,7 +51,7 @@ class BaseFormatter(logging.Formatter):
         return logging.Formatter.format(self, record)
 
 
-def set_logger(module_name, logger_level):
+def set_logger(module_name, logger_level=logging.DEBUG):
     global MODULE_NAME
     MODULE_NAME = module_name
     logger = logging.getLogger()
