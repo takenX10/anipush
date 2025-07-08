@@ -1,5 +1,6 @@
 import sqlite3
 import custom_config
+from custom_dataclasses import AnimeData
 from custom_logging import set_logger
 
 log = set_logger("DATABASE_INTERACTOR")
@@ -68,3 +69,70 @@ def init_db():
     log.info("\t[-] Done checking and adding tables")
     run_migrations()
     log.info("[-] Done initializing database")
+
+
+def add_anime_bulk(anime_list: list[AnimeData], related_to:int) -> bool:
+    log.info(f"[.] Adding bulk anime list to db (length: {len(anime_list)})")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.executemany(
+            """
+            INSERT OR REPLACE INTO anime (
+                id, title, type, status, cover, episodes, latest_aired_episode, related_to
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    anime.id,
+                    anime.title,
+                    anime.type,
+                    anime.status,
+                    anime.cover,
+                    anime.episodes,
+                    anime.latest_aired_episode,
+                    related_to
+                )
+                for anime in anime_list
+            ]
+        )
+        conn.commit()
+        log.info(f"[+] Bulk insert successful")
+        return True
+    except Exception as e:
+        log.error(f"[!] Error during bulk insert: {e}")
+        return False
+    finally:
+        conn.close()
+        return True
+
+
+def add_user_anime_bulk(anime_ids: list[int], user_id: int) -> bool:
+    log.info(f"[.] Adding bulk user_anime (user_id: {user_id}, len anime_ids: {len(anime_ids)})")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.executemany(
+            """
+            INSERT OR REPLACE INTO user_anime (
+                user_id, anime_id, notified_episode
+            ) VALUES (?, ?, ?)
+            """,
+            [
+                (
+                    user_id,
+                    anime_id,
+                    0  # notified_episode default a 0
+                )
+                for anime_id in anime_ids
+            ]
+        )
+        conn.commit()
+        log.info(f"[+] Bulk insert into user_anime successful")
+        return True
+    except Exception as e:
+        log.error(f"[!] Error during bulk insert into user_anime: {e}")
+        return False
+    finally:
+        conn.close()
+        return True
