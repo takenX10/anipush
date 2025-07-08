@@ -1,10 +1,12 @@
-import json, time, logging
+import json, time, datetime, logging
 import requests
+from custom_dataclasses import AnimeData
 from custom_logging import set_logger
 
 log = set_logger("API_INTERACTOR", logging.INFO)
 
 WRITTEN_DATA_FORMAT = ["MANGA", "NOVEL", "ONE_SHOT"]
+MAX_ANIME_PER_QUERY = 25
 
 API_URL = "https://graphql.anilist.co"
 
@@ -169,10 +171,104 @@ query Media($mediaId: Int) {
             main_story_anime.append(current_id)
     return main_story_anime, spinoff_anime
     
+def get_anime_data_from_id_list(anime_id_list:list[int])->list[AnimeData]|None:
+    log.info("Getting anime data from id list")
+    query = '''
+query AnimeData($mediaId: [Int], $page: Int, $perPage: Int) {
+  Page(page: $page, perPage: $perPage) {
+    media(id_in: $mediaId) {
+        id
+        type
+        status
+        episodes
+        updatedAt
+        title {
+            romaji
+            english
+        }
+        nextAiringEpisode {
+            episode
+        }
+        coverImage {
+            extraLarge
+        }
+        startDate {
+            year
+            month
+            day
+        }
+        nextAiringEpisode {
+            episode
+            airingAt
+        }
+    }
+  }
+}   '''
+    anime_data_list : list[AnimeData] = []
+    for i in range((len(anime_id_list)//MAX_ANIME_PER_QUERY)+1):
+        anime_portion = anime_id_list[
+            i*MAX_ANIME_PER_QUERY: min((i+1)*MAX_ANIME_PER_QUERY, len(anime_id_list))
+        ]
+        variables = {
+            "page":1,
+            "perPage":MAX_ANIME_PER_QUERY,
+            "mediaId":anime_portion
+        }
+        data = send_request_to_anilist(query, variables, "get_anime_data")
+        if data is None or 'data' not in data or \
+            'Page' not in data['data'] or \
+            'media' not in data['data']['Page']:
+                log.error("The json structure returned by anilist is wrong!")
+                return None
+    
+        media_list = data['data']['Page']['media']
+        if not media_list or len(media_list) != len(anime_portion):
+            log.error("The returned anilist data is wrong, length does not match!")
+            return None
 
-if __name__ == "__main__":
-    username = input("Inserisci username AniList: ")
-    print(get_anime_relations_from_anime_id(username))
+        for m in media_list:
+            if ("romaji" not in m["title"] and "english" not in m["title"]) or \
+                 ("nextAiringEpisode" in m and m["nextAiringEpisode"] is not None and "episode" not in m["nextAiringEpisode"]) or \
+                 "startDate" not in m or \
+                 "day" not in m["startDate"] or \
+                 "month" not in m["startDate"] or \
+                 "year" not in m["startDate"] or \
+                 "coverImage" not in m or \
+                 "extraLarge" not in m["coverImage"] or \
+                 "id" not in m or \
+                 "title" not in m or \
+                 "episodes" not in m or \
+                 "type" not in m or \
+                 "status" not in m:
+                log.error("The anime data returned by anilist is broken, returning empty response")
+                return None
+
+            title = m["title"]["romaji"]
+            if "english" in m["title"] and len(m["title"]["english"]) > 0:
+                title = m["title"]["english"]
+            next = m["nextAiringEpisode"]
+            if next:
+                next = next["episode"]
+            else:
+                next = m["episodes"]
+
+            date = datetime.datetime(year=m["startDate"]["year"], month=m["startDate"]["month"], day=m["startDate"]["day"])
+            date = time.mktime(date.timetuple())
+            anime_data_list.append(
+                AnimeData(
+                    id=m["id"],
+                    type=m["type"],
+                    status=m["status"],
+                    cover=m["coverImage"]["extraLarge"],
+                    episodes=m["episodes"],
+                    latest_aired_episode=next,
+                    title=title,
+                    date=date
+                )
+            )
+
+    return anime_data_list
+
     
 
 
