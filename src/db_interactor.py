@@ -114,7 +114,7 @@ def add_user_anime_bulk(anime_ids: list[int], user_id: int) -> bool:
     try:
         cursor.executemany(
             """
-            INSERT OR ignore INTO user_anime (
+            INSERT OR ignore wINTO user_anime (
                 anilist_user_id, anime_id
             ) VALUES (?, ?)
             """,
@@ -189,5 +189,6 @@ def update_last_user_activity(user_id:int, last_activity:int):
         """update users set last_activity_checked=? where id=?""",
         (last_activity, user_id, ),
     )
+    conn.commit()
     conn.close()
     return
