@@ -15,7 +15,7 @@ def check_new_user_activity():
         log.info(f"\t[.] Starting check for user {user_id}")
         last_activity = get_last_user_activity(user_id)
         log.info(f"\t[o] Previous last activity found {last_activity}")
-        activities = get_new_user_activity(user_id, last_activity)
+        activities, max_activity_date = get_new_user_activity(user_id, last_activity)
         log.info(f"\t[o] Found {len(activities)} new user activities")
         for a in activities:
             if check_anime_in_db(a):
@@ -35,7 +35,7 @@ def check_new_user_activity():
             add_anime_bulk(anime_data_list, min_id)
             log.info(f"\t\t[+] Done adding anime {a} and all his parents to the db")
         add_user_anime_bulk(activities, user_id)
-        update_last_user_activity(user_id, last_activity)
+        update_last_user_activity(user_id, max_activity_date)
         log.info(f"\t[.] Done new activity check for user {user_id}")
     log.info("[+] Done checking new user activity")
         

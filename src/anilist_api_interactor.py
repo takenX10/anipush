@@ -290,7 +290,7 @@ query AnimeData($mediaId: [Int], $page: Int, $perPage: Int) {
     return anime_data_list
 
     
-def get_new_user_activity(user_id:int, last_activity:int)->list[int]:
+def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]:
     log.info(f"\t[.] Getting new user activities user_id:{user_id}, last_activity:{last_activity}")
     query = '''
 query ($id: Int, $page: Int, $createdAtGreater: Int) {
@@ -312,6 +312,7 @@ query ($id: Int, $page: Int, $createdAtGreater: Int) {
 
     '''
     current_page = 1
+    max_date = last_activity
     new_anime :list[int] = []
     while True:
         variables = {
@@ -326,10 +327,9 @@ query ($id: Int, $page: Int, $createdAtGreater: Int) {
             'hasNextPage' not in data['data']['Page']['pageInfo'] or \
             'activities' not in data['data']['Page']:
                 log.error("The json structure returned by anilist is wrong!")
-                return None
+                return None, last_activity
         
         activities = data['data']['Page']['activities']
-
         for a in activities:
             if 'status' not in a or \
                 a['status'] != 'completed' or \
@@ -338,8 +338,10 @@ query ($id: Int, $page: Int, $createdAtGreater: Int) {
                 'id' not in a['media']:
                 log.debug(f"The json structure of activity {a} returned by anilist is wrong!")
                 continue
+            if a["createdAt"] > max_date:
+                max_date = a["createdAt"]
             new_anime.append(a['media']['id'])
         if not data['data']['Page']['pageInfo']['hasNextPage']:
             break
         current_page += 1
-    return new_anime
+    return new_anime, max_date

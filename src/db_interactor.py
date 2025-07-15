@@ -114,7 +114,7 @@ def add_user_anime_bulk(anime_ids: list[int], user_id: int) -> bool:
     try:
         cursor.executemany(
             """
-            INSERT OR ignore wINTO user_anime (
+            INSERT OR ignore INTO user_anime (
                 anilist_user_id, anime_id
             ) VALUES (?, ?)
             """,
@@ -186,7 +186,7 @@ def update_last_user_activity(user_id:int, last_activity:int):
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        """update users set last_activity_checked=? where id=?""",
+        """update users set last_activity_checked=? where anilist_id=?""",
         (last_activity, user_id, ),
     )
     conn.commit()
