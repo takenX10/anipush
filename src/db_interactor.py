@@ -1,10 +1,11 @@
 import sqlite3
 import custom_config
-from custom_dataclasses import AnimeData
+from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
 
 log = set_logger("DATABASE_INTERACTOR")
 
+NO_OLD_DATA_FOUND_STATUS = "NO_OLD_DATA_FOUND"
 
 def add_column(table_name, column_name, column_type):
     log.info(f"\t\t[.] Adding column {column_name} on table {table_name}")
@@ -25,7 +26,11 @@ def add_column(table_name, column_name, column_type):
 def run_migrations():
     """Run all database migrations in order"""
     log.info(f"\t[.] Running migrations commands")
-    #add_column("users", "is_admin", "INTEGER DEFAULT 0")
+    add_column("anime", "updated_at", "INTEGER DEFAULT 0")
+    add_column("anime_relations", "date_update_found", "INTEGER DEFAULT 0")
+    add_column("users", "telegram_id", "INTEGER DEFAULT -1")
+    add_column("anime", "start_date", "INTEGER DEFAULT 0")
+    add_column("anime", "old_status", "TEXT")
     log.info(f"\t[-] Done running migrations")
     pass
 
@@ -63,6 +68,15 @@ def init_db():
             notified_episode INTEGER DEFAULT 0,
             UNIQUE(anilist_user_id, anime_id)
         );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS anime_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            primary_anilist_id INTEGER,
+            related_anilist_id INTEGER,
+            relation_type TEXT,
+            UNIQUE(primary_anilist_id, related_anilist_id)
+        );
     """)    
     conn.commit()
     conn.close()
@@ -71,18 +85,31 @@ def init_db():
     log.info("[-] Done initializing database")
 
 
-def add_anime_bulk(anime_list: list[AnimeData], related_to:int) -> bool:
+def add_anime_bulk(anime_list: list[AnimeData]) -> bool:
     log.info(f"[.] Adding bulk anime list to db (length: {len(anime_list)})")
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     try:
-        cursor.executemany(
-            """
-            INSERT OR REPLACE INTO anime (
-                id, title, type, status, cover, episodes, latest_aired_episode, related_to
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
+        for anime in anime_list:
+            old_status = NO_OLD_DATA_FOUND_STATUS
+            cursor.execute(
+                """SELECT status, updated_at, related_to FROM anime WHERE id = ?""",
+                (anime.id,anime.updatedDate),
+            )
+            res = cursor.fetchall()
+            if len(res) > 0:
+                if res[0][1] > anime.updatedDate:
+                    log.debug(f"[?] Did not update anime {anime.id} because the update date {anime.updatedDate} was older than the current one ({res[0][0]})")
+                    continue
+                if res[0][2] != -1:
+                    old_status = res[0][0]
+                
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO anime (
+                    id, title, type, status, cover, episodes, latest_aired_episode, related_to, updated_at, start_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     anime.id,
                     anime.title,
@@ -91,14 +118,14 @@ def add_anime_bulk(anime_list: list[AnimeData], related_to:int) -> bool:
                     anime.cover,
                     anime.episodes,
                     anime.latest_aired_episode,
-                    related_to
+                    -1,
+                    anime.updatedDate,
+                    anime.startDate,
+                    old_status
                 )
-                for anime in anime_list
-            ]
-        )
+            )
         conn.commit()
         log.info(f"[+] Bulk insert successful")
-        return True
     except Exception as e:
         log.error(f"[!] Error during bulk insert: {e}")
         return False
@@ -106,6 +133,41 @@ def add_anime_bulk(anime_list: list[AnimeData], related_to:int) -> bool:
         conn.close()
         return True
 
+def add_relations_bulk(relations_list: list[AnimeRelation]) -> bool:
+    log.info(f"[.] Adding bulk relations list to db (length: {len(relations_list)})")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    try:
+        for relation in relations_list:
+            cursor.execute(
+                """SELECT date_update_found FROM anime_relations WHERE primary_anilist_id=? AND related_anilist_id = ? AND date_update_found >= ?""",
+                (relation.primary_anilist_id,relation.related_anilist_id, relation.date_update_found),
+            )
+            res = cursor.fetchall()
+            if len(res) > 0:
+                log.debug(f"[?] Did not update relation {relation.primary_anilist_id}->{relation.related_anilist_id} because the update date {relation.date_update_found} was older than the current one ({res[0][0]})")
+                continue
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO anime_relations (
+                    primary_anilist_id, related_anilist_id, relation_type, date_update_found
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    relation.primary_anilist_id,
+                    relation.related_anilist_id,
+                    relation.relation_type,
+                    relation.date_update_found
+                )
+            )
+        conn.commit()
+        log.info(f"[+] Bulk insert successful")
+    except Exception as e:
+        log.error(f"[!] Error during bulk insert: {e}")
+        return False
+    finally:
+        conn.close()
+        return True
 
 def add_user_anime_bulk(anime_ids: list[int], user_id: int) -> bool:
     log.info(f"[.] Adding bulk user_anime (user_id: {user_id}, len anime_ids: {len(anime_ids)})")
@@ -186,9 +248,123 @@ def update_last_user_activity(user_id:int, last_activity:int):
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        """update users set last_activity_checked=? where anilist_id=?""",
+        """UPDATE users SET last_activity_checked=? WHERE anilist_id=?""",
         (last_activity, user_id, ),
     )
     conn.commit()
     conn.close()
     return
+
+
+def get_last_updated_at()->int:
+    log.info(f"[.] Getting user id list")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT updated_at FROM anime ORDER BY updated_at DESC LIMIT 1 """,
+    )
+    res = cursor.fetchall()
+    conn.close()
+    if len(res) != 1 or len(res[0]) != 1:
+        return 0
+    return res[0][0]
+
+def get_anime_data(anime_id:int)->AnimeData|None:
+    log.debug(f"[.] Getting anime data for anime {anime_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT title,type,status,cover,episodes,latest_aired_episode,start_date,updated_at FROM anime WHERE id=?""",
+        (anime_id,)
+    )
+    res = cursor.fetchall()
+    conn.close()
+    anime :AnimeData|None= None
+    if len(res) == 1 and len(res[0]) == 8:
+        anime = AnimeData(
+            id=anime_id,
+            title=res[0][0],
+            type=res[0][1],
+            status=res[0][2],
+            cover=res[0][3],
+            episodes=res[0][4],
+            latest_aired_episode=res[0][5],
+            startDate=res[0][6],
+            updatedDate=res[0][7]
+        )
+    log.debug(f"[i] Done getting data for anime {anime_id}")
+    return anime
+
+def get_anime_relations(anime_id:int)->list[AnimeRelation]|None:
+    log.debug(f"\t\t\t[.] Getting anime relations for anime {anime_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT related_anilist_id, relation_type, date_update_found FROM anime_relations WHERE primary_anilist_id=?""",
+        (anime_id,)
+    )
+    res = cursor.fetchall()
+    conn.close()
+    relation_list : list[AnimeRelation] = []
+    for v in res:
+        if len(v) != 3:
+            log.error("\t\t\t[!] Data returned from the get_relation query is broken!")
+            return None
+        relation_list.append(AnimeRelation(
+            primary_anilist_id=anime_id,
+            related_anilist_id=v[0],
+            relation_type=v[1],
+            date_update_found=v[2]
+        ))
+    log.debug(f"[i] Done getting relations for anime {anime_id}")
+    return relation_list
+
+def update_anime_related_to(anime_id, relation_id):
+    log.debug(f"[.] Getting anime relations for anime {anime_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT status, old_status, related_to FROM anime WHERE id = ?""",
+        (anime_id),
+    )
+    res = cursor.fetchall()
+    if not res or len(res) == 0:
+        log.error(f"[!] Can't update anime relation because anime does not exists {anime_id} {relation_id}")
+        return
+    if len(res[0]) != 3:
+        log.error(f"[!] Something went wrong while extracting anime information during relation {anime_id}->{relation_id} insertion")
+        return
+    cursor.execute(
+        """UPDATE anime SET related_to = ? WHERE id=?""",
+        (relation_id, anime_id)
+    )
+    if res[0][1] == NO_OLD_DATA_FOUND_STATUS:
+        # TODO: notify that the new anime has been found
+        pass
+    elif res[0][0] != res[0][1]:
+        # TODO: notify that the new anime might have changed status
+        pass
+    
+    conn.commit()
+    conn.close()
+    log.debug(f"[i] Done getting relations for anime {anime_id}")
+    return
+
+def find_next_unrelated_anime(offset:int)->int|None:
+    log.debug(f"[.] Getting unrelated anime")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT id FROM anime WHERE related_to=-1 limit 1 offset ?""",
+        (offset,)
+    )
+    res = cursor.fetchall()
+    conn.close()
+    if len(res) != 1:
+        log.debug(f"[i] No unrelated anime found")
+        return None
+    if len(res[0]) != 1:
+        log.error("[!] Could not find unrelated anime, error in the database result")
+        return None
+    log.debug(f"[i] Done getting unrelated anime (id: {res[0][0]})")
+    return res[0][0]
