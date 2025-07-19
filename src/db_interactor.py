@@ -31,6 +31,7 @@ def run_migrations():
     add_column("users", "telegram_id", "INTEGER DEFAULT -1")
     add_column("anime", "start_date", "INTEGER DEFAULT 0")
     add_column("anime", "old_status", "TEXT")
+    add_column("users", "anilist_username", "TEXT")
     log.info(f"\t[-] Done running migrations")
     pass
 
@@ -368,3 +369,54 @@ def find_next_unrelated_anime(offset:int)->int|None:
         return None
     log.debug(f"[i] Done getting unrelated anime (id: {res[0][0]})")
     return res[0][0]
+
+
+def get_telegram_id_list() -> list[int]:
+    log.info(f"[.] Getting telegram id list")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT telegram_id FROM users WHERE telegram_id != -1""",
+    )
+    res = cursor.fetchall()
+    conn.close()
+    return [r[0] for r in res] or []
+
+
+def upsert_user_telegram_anilist(telegram_id: int, anilist_username: str):
+    log.info(f"[.] Upsert user: telegram_id={telegram_id}, anilist_username={anilist_username}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO users (telegram_id, anilist_username)
+        VALUES (?, ?)
+        ON CONFLICT(telegram_id) DO UPDATE SET anilist_username=excluded.anilist_username
+        """,
+        (telegram_id, anilist_username)
+    )
+    conn.commit()
+    conn.close()
+    log.info(f"[+] Upsert user done")
+
+
+def get_user_info_by_telegram_id(telegram_id: int):
+    log.info(f"[.] Getting user info for telegram_id={telegram_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT anilist_username, anilist_id, last_activity_checked
+        FROM users WHERE telegram_id = ?
+        """,
+        (telegram_id,)
+    )
+    res = cursor.fetchone()
+    conn.close()
+    if res:
+        return {
+            "anilist_username": res[0],
+            "anilist_id": res[1],
+            "last_activity_checked": res[2]
+        }
+    return None
