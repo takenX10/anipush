@@ -10,4 +10,12 @@ class AnimeData:
     cover: str
     episodes: int
     latest_aired_episode: int
-    date: int
+    startDate: int
+    updatedDate: int
+
+@dataclass
+class AnimeRelation:
+    primary_anilist_id: int
+    related_anilist_id: int
+    relation_type: str
+    date_update_found: int
