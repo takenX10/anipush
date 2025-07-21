@@ -2,6 +2,7 @@ import sqlite3
 import custom_config
 from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
+import requests
 
 log = set_logger("DATABASE_INTERACTOR")
 
@@ -43,7 +44,6 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
             telegram_handle TEXT,
             anilist_id INTEGER,
             last_activity_checked INTEGER DEFAULT 0
@@ -58,7 +58,7 @@ def init_db():
             cover TEXT,
             episodes INTEGER,
             latest_aired_episode INTEGER,
-            related_to INTEGER
+            related_to TEXT DEFAULT ''
         );
     """)
     cursor.execute("""
@@ -95,21 +95,21 @@ def add_anime_bulk(anime_list: list[AnimeData]) -> bool:
             old_status = NO_OLD_DATA_FOUND_STATUS
             cursor.execute(
                 """SELECT status, updated_at, related_to FROM anime WHERE id = ?""",
-                (anime.id,anime.updatedDate),
+                (anime.id,),
             )
             res = cursor.fetchall()
             if len(res) > 0:
                 if res[0][1] > anime.updatedDate:
                     log.debug(f"[?] Did not update anime {anime.id} because the update date {anime.updatedDate} was older than the current one ({res[0][0]})")
                     continue
-                if res[0][2] != -1:
+                if res[0][2] != '':
                     old_status = res[0][0]
                 
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO anime (
-                    id, title, type, status, cover, episodes, latest_aired_episode, related_to, updated_at, start_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, title, type, status, cover, episodes, latest_aired_episode, updated_at, start_date, old_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     anime.id,
@@ -119,7 +119,6 @@ def add_anime_bulk(anime_list: list[AnimeData]) -> bool:
                     anime.cover,
                     anime.episodes,
                     anime.latest_aired_episode,
-                    -1,
                     anime.updatedDate,
                     anime.startDate,
                     old_status
@@ -146,7 +145,7 @@ def add_relations_bulk(relations_list: list[AnimeRelation]) -> bool:
             )
             res = cursor.fetchall()
             if len(res) > 0:
-                log.debug(f"[?] Did not update relation {relation.primary_anilist_id}->{relation.related_anilist_id} because the update date {relation.date_update_found} was older than the current one ({res[0][0]})")
+                log.debug(f"[?] Did not update relation {relation.primary_anilist_id}->{relation.related_anilist_id}: update_date {relation.date_update_found} > {res[0][0]})")
                 continue
             cursor.execute(
                 """
@@ -320,13 +319,13 @@ def get_anime_relations(anime_id:int)->list[AnimeRelation]|None:
     log.debug(f"[i] Done getting relations for anime {anime_id}")
     return relation_list
 
-def update_anime_related_to(anime_id, relation_id):
+def update_anime_related_to(anime_id:int, relation_id:int):
     log.debug(f"[.] Getting anime relations for anime {anime_id}")
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """SELECT status, old_status, related_to FROM anime WHERE id = ?""",
-        (anime_id),
+        (anime_id,),
     )
     res = cursor.fetchall()
     if not res or len(res) == 0:
@@ -335,16 +334,28 @@ def update_anime_related_to(anime_id, relation_id):
     if len(res[0]) != 3:
         log.error(f"[!] Something went wrong while extracting anime information during relation {anime_id}->{relation_id} insertion")
         return
-    cursor.execute(
-        """UPDATE anime SET related_to = ? WHERE id=?""",
-        (relation_id, anime_id)
-    )
-    if res[0][1] == NO_OLD_DATA_FOUND_STATUS:
+    related_string = ''
+    if  len(res[0]) == 3 and len(res[0][2])>0:
+        related_string = res[0][2] + '|'
+    if str(relation_id) not in related_string.split('|'):
+        cursor.execute(
+            """UPDATE anime SET related_to = ? WHERE id=?""",
+            (related_string+str(relation_id), anime_id)
+        )
+    if res[0][1] == NO_OLD_DATA_FOUND_STATUS or res[0][1] is None:
         # TODO: notify that the new anime has been found
-        pass
+        user_ids = get_user_ids_for_anime(anime_id)
+        if user_ids:
+            for u in user_ids:
+                pass
+                #send_telegram_notification(u, anime_id)
     elif res[0][0] != res[0][1]:
         # TODO: notify that the new anime might have changed status
-        pass
+        user_ids = get_user_ids_for_anime(anime_id)
+        if user_ids:
+            for u in user_ids:
+                pass
+                #send_telegram_notification(u, anime_id)
     
     conn.commit()
     conn.close()
@@ -356,7 +367,7 @@ def find_next_unrelated_anime(offset:int)->int|None:
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT id FROM anime WHERE related_to=-1 limit 1 offset ?""",
+        """SELECT id FROM anime WHERE related_to='' limit 1 offset ?""",
         (offset,)
     )
     res = cursor.fetchall()
@@ -383,21 +394,35 @@ def get_telegram_id_list() -> list[int]:
     return [r[0] for r in res] or []
 
 
-def upsert_user_telegram_anilist(telegram_id: int, anilist_username: str):
+def update_anilist_username(telegram_id: int, anilist_username: str):
     log.info(f"[.] Upsert user: telegram_id={telegram_id}, anilist_username={anilist_username}")
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO users (telegram_id, anilist_username)
-        VALUES (?, ?)
-        ON CONFLICT(telegram_id) DO UPDATE SET anilist_username=excluded.anilist_username
+        SELECT anilist_id FROM users WHERE telegram_id=?
         """,
-        (telegram_id, anilist_username)
+        (telegram_id,)
+    )
+    res = cursor.fetchall()
+    if not res:
+        raise Exception("Something went wrong, user missing but it should not be missing")
+    if len(res) == 1:
+        cursor.execute(
+            """
+            DELETE FROM user_anime WHERE anilist_user_id=?
+            """,
+            (res[0][0],)
+        )
+    cursor.execute(
+        """
+        UPDATE users SET anilist_username=?,anilist_id=-1 WHERE telegram_id=?
+        """,
+        (anilist_username, telegram_id)
     )
     conn.commit()
     conn.close()
-    log.info(f"[+] Upsert user done")
+    log.info(f"[+] update anilist username done")
 
 
 def get_user_info_by_telegram_id(telegram_id: int):
@@ -420,3 +445,120 @@ def get_user_info_by_telegram_id(telegram_id: int):
             "last_activity_checked": res[2]
         }
     return None
+
+
+def check_and_update_telegram_user(telegram_id: int, telegram_handle: str|None) -> bool:
+    log.info(f"[.] Checking/updating user: telegram_id={telegram_id}, telegram_handle={telegram_handle}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE telegram_id = ? AND telegram_handle=?", (telegram_id, telegram_handle))
+    res = cursor.fetchone()
+    if res and len(res) == 1:
+        return True
+    cursor.execute("SELECT id, telegram_handle FROM users WHERE telegram_id = ?", (telegram_id,))
+    user_by_id = cursor.fetchone()
+    cursor.execute("SELECT id, telegram_id FROM users WHERE telegram_handle = ?", (telegram_handle,))
+    user_by_handle = cursor.fetchone()
+    if user_by_id and user_by_handle:
+        cursor.execute("UPDATE users SET telegram_id=-1 WHERE telegram_id=?", (telegram_id,))
+        cursor.execute("UPDATE users SET telegram_id=? WHERE telegram_handle=?", (telegram_id, telegram_handle))
+        conn.commit()
+        conn.close()
+        return True
+    elif user_by_id:
+        cursor.execute("UPDATE users SET telegram_handle=? WHERE telegram_id=?", (telegram_handle, telegram_id))
+        conn.commit()
+        conn.close()
+        return True
+    elif user_by_handle:
+        cursor.execute("UPDATE users SET telegram_id=? WHERE telegram_handle=?", (telegram_id, telegram_handle))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_users_with_missing_anilist_id():
+    log.info("[.] Getting users with missing anilist_id")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT telegram_id, anilist_username FROM users WHERE anilist_id = -1 AND anilist_username IS NOT NULL AND anilist_username != ''
+        """
+    )
+    res = cursor.fetchall()
+    conn.close()
+    return res
+
+
+def update_user_anilist_id(telegram_id: int, anilist_id: int):
+    log.info(f"[.] Updating anilist_id for telegram_id={telegram_id} to {anilist_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE users SET anilist_id=? WHERE telegram_id=?
+        """,
+        (anilist_id, telegram_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def send_telegram_notification(telegram_id: int, anime_id: int):
+    try:
+        anime = get_anime_data(anime_id)
+        if not anime:
+            log.error(f"[!] Could not find anime with id {anime_id} for notification")
+            return
+        url = f"https://api.telegram.org/bot{custom_config.BOT_TOKEN}/sendPhoto"
+        caption = (
+            f"<b>🔔 Anime Update!</b>\n"
+            f"<b>Title:</b> {anime.title}\n"
+            f"<b>Type:</b> {anime.type}\n"
+            f"<b>Status:</b> {anime.status}\n"
+            f"<b>Episodes:</b> {anime.episodes}\n"
+            f"<b>Latest aired episode:</b> {anime.latest_aired_episode}\n" if anime.latest_aired_episode else ""
+            f"<b>Start date:</b> {anime.startDate}\n"
+            f"<b>Updated at:</b> {anime.updatedDate}"
+        )
+        data = {
+            'chat_id': str(telegram_id),
+            'caption': caption,
+            'photo': anime.cover,
+            'parse_mode': 'HTML'
+        }
+        requests.post(url, data=data, timeout=10)
+    except Exception as e:
+        log.error(f"[!] Failed to send Telegram notification to {telegram_id}: {e}")
+
+
+def get_user_ids_for_anime(anime_id: int) -> list[int]|None:
+    log.info(f"[.] Getting user ids for anime_id={anime_id}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT telegram_id FROM user_anime join users on user_anime.anilist_user_id = users.anilist_id WHERE user_anime.anime_id = ?
+        """,
+        (anime_id,)
+    )
+    res = cursor.fetchall()
+    conn.close()
+    if res is None:
+        return None
+    return [r[0] for r in res]
+
+def add_user(telegram_id: int, telegram_handle:str):
+    log.info(f"[.] Adding user: telegram_id={telegram_id}, telegram_handle={telegram_handle}")
+    conn = sqlite3.connect(custom_config.DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO users (telegram_id, telegram_handle, anilist_username, anilist_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        (telegram_id, telegram_handle, "", -1)
+    )
+    conn.commit()
+    conn.close()
