@@ -42,7 +42,7 @@ class ColoredFormatter(logging.Formatter):
 
 class BaseFormatter(logging.Formatter):
     def format(self, record):
-        record.msg = record.orig
+        record.msg = record.orig # type: ignore
         timestamp = self.formatTime(record, self.datefmt)
         if record.levelno == logging.WARNING:
             record.msg = f"[{record.levelname}] {timestamp} {'{'}{MODULE_NAME}-{print_function_name(record.funcName)}{'}'} {record.msg}"
@@ -60,7 +60,7 @@ def set_logger(module_name, logger_level=logging.DEBUG):
     if LOGGER:
         return LOGGER
     MODULE_NAME = module_name
-    LOGGER = logging.getLogger()
+    LOGGER = logging.getLogger(module_name)
     LOGGER.setLevel(logger_level)
     
     console_formatter: ColoredFormatter = ColoredFormatter(datefmt='%Y-%m-%d %H:%M:%S')
