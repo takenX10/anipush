@@ -45,6 +45,7 @@ query ($userName: String) {
   MediaListCollection(userName: $userName, type: ANIME) {
     lists {
       entries {
+        status
         media {
           id
         }

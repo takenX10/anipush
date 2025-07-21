@@ -104,7 +104,7 @@ def parse_media(m:dict)->tuple[AnimeData, list[AnimeRelation]] | None:
     log.debug(f"\t\t[+] Added anime {m['id']} to list")
     if m['relations']['edges'] is None:
         return (anime, [])
-    log.debug(f"\t\t[+] Found {len(m['relations']['edges'])} to add for anime {m['id']}")
+    log.debug(f"\t\t[+] Found {len(m['relations']['edges'])} relations to add for anime {m['id']}")
     for r in m['relations']['edges']:
         if r['node']['format'] in WRITTEN_DATA_FORMAT or r["relationType"] == "CHARACTER":
             continue
@@ -135,7 +135,9 @@ def get_watched_anime(username:str)->list[int]|None:
         if 'entries' not in l:
             continue
         for entry in l['entries']:
-            if 'media' not in entry or 'id' not in entry['media']:
+            if 'media' not in entry or 'id' not in entry['media'] or 'status' not in entry:
+                continue
+            if entry['status'] == "DROPPED":
                 continue
             anime_list.append(entry['media']['id'])
     return anime_list
@@ -170,6 +172,7 @@ def get_anime_data_from_id(anime_id_list:list[int])->list[tuple[AnimeData, list[
                     log.error(f"[!] Something went wrong while getting anime data {m['id']}!")
                 else:
                     log.error(f"[!] Something went wrong while getting anime data (Unkwnown id)!")
+                continue
             anime_data_list.append(res)
 
     return anime_data_list
@@ -192,16 +195,17 @@ def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]
             'hasNextPage' not in data['data']['Page']['pageInfo'] or \
             'activities' not in data['data']['Page']:
                 log.error("The json structure returned by anilist is wrong!")
-                return None, last_activity
+                return [], last_activity
         
         activities = data['data']['Page']['activities']
         for a in activities:
             if 'status' not in a or \
-                a['status'] != 'completed' or \
                 'createdAt' not in a or \
                 'media' not in a or \
                 'id' not in a['media']:
                 log.debug(f"The json structure of activity {a} returned by anilist is wrong!")
+                continue
+            if a['status'] != 'completed':
                 continue
             if a["createdAt"] > max_date:
                 max_date = a["createdAt"]
@@ -355,3 +359,18 @@ query Media($mediaId: Int) {
     return main_story_anime, spinoff_anime
 
 """
+
+
+def get_anilist_id_from_username(username: str) -> int | None:
+    query = '''
+    query ($name: String) {
+      User(name: $name) {
+        id
+      }
+    }
+    '''
+    variables = {"name": username}
+    data = send_request_to_anilist(query, variables, f"get_anilist_id_from_username {username}")
+    if data and 'data' in data and 'User' in data['data'] and data['data']['User'] and 'id' in data['data']['User']:
+        return data['data']['User']['id']
+    return None
