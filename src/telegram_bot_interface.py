@@ -1,6 +1,15 @@
-import requests
+import requests, logging
+from custom_dataclasses import AnimeData, AnimeRelation
+from custom_logging import set_logger
+from daemon_connectors import main_daemon_job
+log = set_logger("TELEGRAM_BOT", logging.INFO)
+from anilist_api_interactor import get_anilist_id_from_username, get_anime_data_from_id, get_watched_anime
+
+from db_interactor import add_anime_bulk, add_relations_bulk, add_user, add_user_anime_bulk, check_and_update_telegram_user, check_anime_in_db, get_anime_data, get_user_info_by_telegram_id, get_users_with_missing_anilist_id, init_db, update_anilist_username, update_user_anilist_id
+
+
 import custom_config
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     CommandHandler,
     ContextTypes,
@@ -8,28 +17,12 @@ from telegram.ext import (
     ApplicationBuilder,
     ConversationHandler,
     MessageHandler,
-    filters
+    filters,
+    JobQueue
 )
-
-from custom_logging import set_logger
-from db_interactor import upsert_user_telegram_anilist, get_user_info_by_telegram_id
+import asyncio
 
 ASK_ANILIST_USERNAME = range(1)
-
-log = set_logger("TELEGRAM_BOT")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    log.info("HELP called by "+str(user.id) + " "+str(update.effective_user.username))
-    onboarding_message_text = (
-        "<b>❓ Need help with Anipush?</b>\n"
-        "<i>Work in progress...\n\n"
-        "Use /start to register your Anilist username.\n"
-        "Use /change-anilist-username to update your Anilist username.</i>"
-    )
-    log.info("Sending help message to "+str(user.id))
-    await update.message.reply_text(onboarding_message_text, parse_mode="HTML")
-
 
 def set_bot_commands():
     url = f"https://api.telegram.org/bot{custom_config.BOT_TOKEN}/setMyCommands"
@@ -43,9 +36,45 @@ def set_bot_commands():
 
     requests.post(url, json={"commands": commands})
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None:
+        log.info("HELP called but user is None")
+        return
+    if update.message is None:
+        log.info("HELP called but message is None")
+        return
+    log.info("HELP called by "+str(user.id) + " "+str(user.username))
+    if not check_and_update_telegram_user(user.id, user.username):
+        return
+    onboarding_message_text = (
+        "<b>❓ Need help with Anipush?</b>\n"
+        "<i>Work in progress...\n\n"
+        "Use /start to register your Anilist username.\n"
+        "Use /changeusername to update your Anilist username.</i>"
+    )
+    log.info("Sending help message to "+str(user.id))
+    await update.message.reply_text(onboarding_message_text, parse_mode="HTML")
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user is None:
+        log.info("START called but user is None")
+        return
+    if update.message is None:
+        log.info("START called but message is None")
+        return
     log.info(f"START called by {user.id} {user.username}")
+    if not check_and_update_telegram_user(user.id, user.username):
+        add_user(user.id, user.username or "redacted")
+    info = get_user_info_by_telegram_id(user.id)
+    if info and info.get("anilist_id", -1) != -1:
+        await update.message.reply_text(
+            "<b>ℹ️ You are already registered with Anilist.</b>\nUse /changeusername if you want to update your Anilist username.",
+            parse_mode="HTML"
+        )
+        return
     await update.message.reply_text(
         "<b>👋 Welcome to Anipush!</b>\n\n"
         "To get started, please send me your <b>Anilist username</b>.",
@@ -55,17 +84,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_anilist_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user is None:
+        log.info("RECEIVE_ANILIST_USERNAME called but user is None")
+        return
+    if update.message is None:
+        log.info("RECEIVE_ANILIST_USERNAME called but message is None")
+        return
+    if update.message.text is None or len(update.message.text) == "":
+        log.info("RECEIVE_ANILIST_USERNAME called but username is None")
+        return
     anilist_username = update.message.text.strip()
-    upsert_user_telegram_anilist(user.id, anilist_username)
+    update_anilist_username(user.id, anilist_username)
     log.info(f"Saved anilist username '{anilist_username}' for telegram_id {user.id}")
     await update.message.reply_text(
-        f"<b>✅ Thank you!</b>\nYour Anilist username <b>{anilist_username}</b> has been saved.",
+        f"<b>✅ Thank you!</b>\n\nYour Anilist username <b>{anilist_username}</b> has been saved.",
         parse_mode="HTML"
     )
     return ConversationHandler.END
 
 async def change_anilist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user is None:
+        log.info("CHANGE_ANILIST called but user is None")
+        return
+    if update.message is None:
+        log.info("CHANGE_ANILIST called but message is None")
+        return
     log.info(f"CHANGE_ANILIST called by {user.id} {user.username}")
     await update.message.reply_text(
         "<b>✏️ Change Anilist Username</b>\n\n"
@@ -76,6 +120,12 @@ async def change_anilist_command(update: Update, context: ContextTypes.DEFAULT_T
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user is None:
+        log.info("STATUS called but user is None")
+        return
+    if update.message is None:
+        log.info("STATUS called but message is None")
+        return
     log.info(f"STATUS called by {user.id} {user.username}")
     info = get_user_info_by_telegram_id(user.id)
     if not info:
@@ -92,13 +142,21 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
+async def process_users_job(context: CallbackContext):
+    log.info("[JOB] Running process_users_with_missing_anilist_id...")
+    await asyncio.get_event_loop().run_in_executor(None, main_daemon_job)
 
 def init_telegram_bot():
     app = ApplicationBuilder().token(custom_config.BOT_TOKEN).build()
+    if app.job_queue is None:
+        raise Exception("Job Queue is none, returning")
+    logging.getLogger("telegram").setLevel(logging.INFO)
     conv_handler = ConversationHandler(
         entry_points=[
+            CommandHandler("help", help_command),
             CommandHandler("start", start_command),
-            CommandHandler("change-anilist-username", change_anilist_command)
+            CommandHandler("changeusername", change_anilist_command),
+            CommandHandler("status", status_command)
         ],
         states={
             ASK_ANILIST_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_anilist_username)]
@@ -106,9 +164,8 @@ def init_telegram_bot():
         fallbacks=[]
     )
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("status", status_command))
     set_bot_commands()
-    #app.job_queue.run_repeating(followup_check, interval=timedelta(seconds=15))
+    app.job_queue.run_repeating(process_users_job, interval=60, first=5)
     log.info("Bot avviato...")
+    
     app.run_polling()
