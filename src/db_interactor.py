@@ -1,8 +1,11 @@
 import sqlite3
+import time
 import custom_config
 from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
 import requests
+
+from utils import format_date
 
 log = set_logger("DATABASE_INTERACTOR")
 
@@ -100,10 +103,9 @@ def add_anime_bulk(anime_list: list[AnimeData]) -> bool:
             res = cursor.fetchall()
             if len(res) > 0:
                 if res[0][1] > anime.updatedDate:
-                    log.debug(f"[?] Did not update anime {anime.id} because the update date {anime.updatedDate} was older than the current one ({res[0][0]})")
+                    log.debug(f"[?] Did not update anime {anime.id}: update date {anime.updatedDate} < current date {res[0][0]}")
                     continue
-                if res[0][2] != '':
-                    old_status = res[0][0]
+                old_status = res[0][0]
                 
             cursor.execute(
                 """
@@ -347,15 +349,13 @@ def update_anime_related_to(anime_id:int, relation_id:int):
         user_ids = get_user_ids_for_anime(anime_id)
         if user_ids:
             for u in user_ids:
-                pass
-                #send_telegram_notification(u, anime_id)
+                send_telegram_notification(u, anime_id, "new")
     elif res[0][0] != res[0][1]:
         # TODO: notify that the new anime might have changed status
         user_ids = get_user_ids_for_anime(anime_id)
         if user_ids:
             for u in user_ids:
-                pass
-                #send_telegram_notification(u, anime_id)
+                send_telegram_notification(u, anime_id, "status_change")
     
     conn.commit()
     conn.close()
@@ -394,6 +394,7 @@ def get_telegram_id_list() -> list[int]:
     return [r[0] for r in res] or []
 
 
+
 def update_anilist_username(telegram_id: int, anilist_username: str):
     log.info(f"[.] Upsert user: telegram_id={telegram_id}, anilist_username={anilist_username}")
     conn = sqlite3.connect(custom_config.DATABASE_PATH)
@@ -423,7 +424,6 @@ def update_anilist_username(telegram_id: int, anilist_username: str):
     conn.commit()
     conn.close()
     log.info(f"[+] update anilist username done")
-
 
 def get_user_info_by_telegram_id(telegram_id: int):
     log.info(f"[.] Getting user info for telegram_id={telegram_id}")
@@ -505,22 +505,27 @@ def update_user_anilist_id(telegram_id: int, anilist_id: int):
     conn.close()
 
 
-def send_telegram_notification(telegram_id: int, anime_id: int):
+def send_telegram_notification(telegram_id: int, anime_id: int, notification_type: str):
     try:
         anime = get_anime_data(anime_id)
         if not anime:
             log.error(f"[!] Could not find anime with id {anime_id} for notification")
             return
         url = f"https://api.telegram.org/bot{custom_config.BOT_TOKEN}/sendPhoto"
+        if notification_type == "new":
+            custom_text = "New anime found!"
+        elif notification_type == "status_change":
+            custom_text = "Anime status changed!"
         caption = (
             f"<b>🔔 Anime Update!</b>\n"
+            f"\n{custom_text}\n\n"
             f"<b>Title:</b> {anime.title}\n"
             f"<b>Type:</b> {anime.type}\n"
             f"<b>Status:</b> {anime.status}\n"
             f"<b>Episodes:</b> {anime.episodes}\n"
             f"<b>Latest aired episode:</b> {anime.latest_aired_episode}\n" if anime.latest_aired_episode else ""
-            f"<b>Start date:</b> {anime.startDate}\n"
-            f"<b>Updated at:</b> {anime.updatedDate}"
+            f"<b>Start date:</b> {format_date(anime.startDate)}\n" if anime.startDate else ""
+            f"<b>Updated at:</b> {format_date(anime.updatedDate)}" if anime.updatedDate else ""
         )
         data = {
             'chat_id': str(telegram_id),
@@ -529,6 +534,7 @@ def send_telegram_notification(telegram_id: int, anime_id: int):
             'parse_mode': 'HTML'
         }
         requests.post(url, data=data, timeout=10)
+        time.sleep(5)
     except Exception as e:
         log.error(f"[!] Failed to send Telegram notification to {telegram_id}: {e}")
 
