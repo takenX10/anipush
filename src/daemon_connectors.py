@@ -63,7 +63,7 @@ def update_database_relations(anime_id:int)->bool:
                 continue
             if rel.relation_type == "PARENT":
                 has_parents = True
-            break
+                break
         if not has_parents:
             for rel in res[1]:
                 if rel.relation_type == "CHARACTER":
@@ -80,9 +80,10 @@ def update_database_relations(anime_id:int)->bool:
                 main_story_anime.append(res[0])
         anime_checked[res[0].id] = True
     anime_data_list = main_story_anime+spinoff_anime
-    min_date= anime_data_list[0].startDate
-    min_id = anime_data_list[0].id
-    for d in anime_data_list:
+    search_min_list = main_story_anime if len(main_story_anime) > 0 else spinoff_anime
+    min_date= search_min_list[0].startDate
+    min_id = search_min_list[0].id
+    for d in search_min_list:
         if d.startDate < min_date:
             min_date = d.startDate
             min_id = d.id
