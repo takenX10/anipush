@@ -1,11 +1,10 @@
 import requests, logging
-from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
 from daemon_connectors import main_daemon_job
-log = set_logger("TELEGRAM_BOT", logging.INFO)
-from anilist_api_interactor import get_anilist_id_from_username, get_anime_data_from_id, get_watched_anime
 
-from db_interactor import add_anime_bulk, add_relations_bulk, add_user, add_user_anime_bulk, check_and_update_telegram_user, check_anime_in_db, get_anime_data, get_user_info_by_telegram_id, get_users_with_missing_anilist_id, init_db, update_anilist_username, update_user_anilist_id
+log = set_logger("TELEGRAM_BOT", logging.INFO)
+
+from db_interactor import add_user, check_and_update_telegram_user, get_user_info_by_telegram_id, update_anilist_username
 
 
 import custom_config

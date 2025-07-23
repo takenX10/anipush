@@ -2,7 +2,6 @@ from custom_logging import set_logger
 from anilist_api_interactor import get_anilist_id_from_username, get_anime_data_from_id, get_new_updates, get_new_user_activity, get_watched_anime
 from custom_dataclasses import AnimeData, AnimeRelation
 from db_interactor import add_anime_bulk, add_relations_bulk, add_user_anime_bulk, check_anime_in_db, find_next_unrelated_anime, get_anime_data, get_anime_relations, get_last_updated_at, get_last_user_activity, get_user_id_list, get_users_with_missing_anilist_id, update_anime_related_to, update_last_user_activity, update_user_anilist_id
-
 log = set_logger("DAEMON_CONNECTORS")
 
 

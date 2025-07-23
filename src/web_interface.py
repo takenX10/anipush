@@ -1,12 +1,11 @@
-import time
-from flask import Flask, render_template_string, request, Markup
-from db_interactor import get_anime_data, get_anime_relations
-import sqlite3
+import time, sqlite3
+from flask import Flask, render_template_string, request
 import custom_config
-from custom_logging import set_logger
-import datetime
-
 from utils import format_date
+from custom_logging import set_logger
+from db_interactor import get_anime_data
+
+
 log = set_logger("WEB_INTERFACE")
 
 app = Flask(__name__)

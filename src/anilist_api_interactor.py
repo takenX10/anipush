@@ -1,7 +1,5 @@
-import sqlite3
 import json, time, datetime, logging
 import requests
-import custom_config
 from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
 from db_interactor import add_anime_bulk, add_relations_bulk
@@ -272,96 +270,6 @@ def get_new_updates(last_update_time:int, add_each_page:bool)->tuple[list[AnimeD
             break
         current_page += 1
     return list(anime_updates_list.values()), relations_list
-
-
-"""
-def get_anime_relations_from_anime_id(anime_id:int)->tuple[list[int],list[int]]:
-    query = '''
-query Media($mediaId: Int) {
-  Media(id: $mediaId) {
-    format
-    relations {
-      edges {
-        relationType
-        node {
-          format
-          id
-          relations {
-            edges {
-              relationType
-              node {
-                format
-                id
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-    '''
-    anime_to_check:list[int]= [anime_id]
-    anime_checked :dict[int,bool]= {}
-    main_story_anime:list[int] = []
-    spinoff_anime:list[int] = []
-
-    while len(anime_to_check) > 0:
-        current_id = anime_to_check.pop()
-        if current_id in anime_checked and anime_checked[current_id] == True:
-            continue
-        variables = {
-            "mediaId": current_id
-        }
-        data = send_request_to_anilist(query, variables, f"get_anime_struct - {current_id}")
-        anime_checked[current_id] = True
-        if data is None or 'data' not in data or \
-            'Media' not in data['data'] or \
-            'relations' not in data['data']['Media']:
-                log.error("The json structure returned by anilist is wrong!")
-                continue
-        
-        if data["data"]["Media"]["format"] in WRITTEN_DATA_FORMAT:
-            continue
-
-        relations = data["data"]["Media"]["relations"]["edges"]
-
-        has_parents = False
-        for rel in relations:
-            if rel["node"]["format"] in WRITTEN_DATA_FORMAT or rel["relationType"] == "CHARACTER":
-                continue
-            if rel["relationType"] == "PARENT":
-                has_parents = True
-            if rel["node"]["id"] in anime_checked:
-                continue
-            anime_checked[rel["node"]["id"]] = True
-
-            has_parents2 = False
-            for rel2 in rel["node"]["relations"]["edges"]:
-                if rel2["node"]["format"] in WRITTEN_DATA_FORMAT or rel2["relationType"] == "CHARACTER":
-                    continue
-                if rel2["relationType"] == "PARENT":
-                    has_parents2 = True
-                if rel2["node"]["id"] in anime_checked or rel2["node"]["id"] in anime_to_check:
-                    continue
-                anime_to_check.append(rel2["node"]["id"])
-            if has_parents2:
-                if rel["node"]["id"] not in spinoff_anime:
-                    spinoff_anime.append(rel["node"]["id"])
-            else:
-                if rel["node"]["id"] not in main_story_anime:
-                    main_story_anime.append(rel["node"]["id"])    
-
-        if has_parents:
-            if current_id not in spinoff_anime:
-                spinoff_anime.append(current_id)
-        else:
-            if current_id not in main_story_anime:
-                main_story_anime.append(current_id)
-    return main_story_anime, spinoff_anime
-
-"""
-
 
 def get_anilist_id_from_username(username: str) -> int | None:
     query = '''
