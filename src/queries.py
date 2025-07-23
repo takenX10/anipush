@@ -4,6 +4,7 @@ query AnimeDataFromId($mediaId: [Int], $page: Int, $perPage: Int) {
         media(id_in: $mediaId) {
             id
             type
+            format
             status
             episodes
             updatedAt
@@ -84,6 +85,7 @@ query AnimeData($page: Int, $perPage: Int) {
     media(sort: UPDATED_AT_DESC, type: ANIME, format_in: [TV, TV_SHORT, MOVIE, SPECIAL, OVA, ONA, MUSIC]) {
       id
       type
+      format
       status
       episodes
       updatedAt

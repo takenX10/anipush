@@ -1,5 +1,7 @@
+import sqlite3
 import json, time, datetime, logging
 import requests
+import custom_config
 from custom_dataclasses import AnimeData, AnimeRelation
 from custom_logging import set_logger
 from db_interactor import add_anime_bulk, add_relations_bulk
@@ -66,6 +68,7 @@ def parse_media(m:dict)->tuple[AnimeData, list[AnimeRelation]] | None:
     if 'id' not in m or \
         m['id'] is None or \
         'type' not in m or \
+        'format' not in m or \
         'status' not in m or \
         'episodes' not in m or \
         'relations' not in m or \
@@ -93,7 +96,7 @@ def parse_media(m:dict)->tuple[AnimeData, list[AnimeRelation]] | None:
     anime = AnimeData(
         id = m['id'],
         title=title,
-        type=m['type'],
+        type=m['format'],
         status=m['status'],
         cover=m['coverImage']['extraLarge'] or "",
         episodes=m['episodes'],
@@ -141,7 +144,7 @@ def get_watched_anime(username:str)->list[int]|None:
                 continue
             anime_list.append(entry['media']['id'])
     return anime_list
-    
+
 def get_anime_data_from_id(anime_id_list:list[int])->list[tuple[AnimeData, list[AnimeRelation]]]|None:
     log.info("\t\t[+] Getting anime data from id")
     anime_data_list : list[tuple[AnimeData, list[AnimeRelation]]] = []
@@ -214,7 +217,6 @@ def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]
             break
         current_page += 1
     return new_anime, max_date
-
 
 def get_new_updates(last_update_time:int, add_each_page:bool)->tuple[list[AnimeData], list[AnimeRelation]]:
     anime_updates_list : dict[int, AnimeData] = {}
