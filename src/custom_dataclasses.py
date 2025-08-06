@@ -10,8 +10,8 @@ class AnimeData:
     cover: str
     episodes: int
     latest_aired_episode: int
-    startDate: int
-    updatedDate: int
+    start_date: int
+    updated_date: int
 
 @dataclass
 class AnimeRelation:

@@ -11,16 +11,16 @@ LOGGER : None|logging.Logger = None
 disable_warnings(InsecureRequestWarning)
 logger: logging.Logger = logging.getLogger(__name__)
 
-def format_error(x):
+def format_error(_):
     return "\033[41m\033[1m[ ERROR ]\033[00m"
 
-def format_warning(x):
+def format_warning(_):
     return "\033[43m\033[1m[WARNING]\033[00m"
 
-def format_info(x):
+def format_info(_):
     return "\033[44m\033[1m[ INFO  ]\033[00m"
 
-def format_debug(x):
+def format_debug(_):
     return "\033[46m\033[1m[ DEBUG ]\033[00m"
 
 def print_function_name(x:str):
@@ -62,7 +62,7 @@ def set_logger(module_name, logger_level=logging.DEBUG):
     MODULE_NAME = module_name
     LOGGER = logging.getLogger(module_name)
     LOGGER.setLevel(logger_level)
-    
+
     console_formatter: ColoredFormatter = ColoredFormatter(datefmt='%Y-%m-%d %H:%M:%S')
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logger_level)
