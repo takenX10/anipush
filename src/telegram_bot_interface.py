@@ -1,14 +1,6 @@
-import requests, logging
-from custom_logging import set_logger
-from daemon_connectors import main_daemon_job
-
-log = set_logger("TELEGRAM_BOT", logging.INFO)
-
-from db_interactor import add_user, check_and_update_telegram_user, get_user_info_by_telegram_id, update_anilist_username
-
-
-import custom_config
-from telegram import Update
+import asyncio
+import logging
+import requests
 from telegram.ext import (
     CommandHandler,
     ContextTypes,
@@ -17,25 +9,37 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
-    JobQueue
+    BotCommand
 )
-import asyncio
+from telegram import Update
+import custom_config
+from db_interactor import add_user, check_and_update_telegram_user, get_user_info_by_telegram_id, update_anilist_username
+
+
+from custom_logging import set_logger
+from daemon_connectors import main_daemon_job
+
+log = set_logger("TELEGRAM_BOT", logging.INFO)
+
 
 ASK_ANILIST_USERNAME = range(1)
+
 
 def set_bot_commands():
     url = f"https://api.telegram.org/bot{custom_config.BOT_TOKEN}/setMyCommands"
 
     commands = [
-        {"command": "help", "description":"Get a full bot description"},
-        {"command": "start", "description":"Start the bot for the first time"},
-        {"command": "status", "description":"Get the user status"},
-        {"command": "change-anilist-username", "description":"Change your referred anilist username"},
+        {"command": "help", "description": "Get a full bot description"},
+        {"command": "start", "description": "Start the bot for the first time"},
+        {"command": "status", "description": "Get the user status"},
+        {"command": "change-anilist-username",
+            "description": "Change your referred anilist username"},
     ]
 
-    requests.post(url, json={"commands": commands})
+    requests.post(url, json={"commands": commands}, timeout=30)
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def help_command(update: Update, _ : ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         log.info("HELP called but user is None")
@@ -56,7 +60,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(onboarding_message_text, parse_mode="HTML")
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, _ : ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         log.info("START called but user is None")
@@ -81,7 +85,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ASK_ANILIST_USERNAME
 
-async def receive_anilist_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def receive_anilist_username(update: Update, _ : ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         log.info("RECEIVE_ANILIST_USERNAME called but user is None")
@@ -94,14 +99,16 @@ async def receive_anilist_username(update: Update, context: ContextTypes.DEFAULT
         return
     anilist_username = update.message.text.strip()
     update_anilist_username(user.id, anilist_username)
-    log.info(f"Saved anilist username '{anilist_username}' for telegram_id {user.id}")
+    log.info(
+        f"Saved anilist username '{anilist_username}' for telegram_id {user.id}")
     await update.message.reply_text(
         f"<b>✅ Thank you!</b>\n\nYour Anilist username <b>{anilist_username}</b> has been saved.",
         parse_mode="HTML"
     )
     return ConversationHandler.END
 
-async def change_anilist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def change_anilist_command(update: Update, _ : ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         log.info("CHANGE_ANILIST called but user is None")
@@ -117,7 +124,8 @@ async def change_anilist_command(update: Update, context: ContextTypes.DEFAULT_T
     )
     return ASK_ANILIST_USERNAME
 
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def status_command(update: Update, _: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
         log.info("STATUS called but user is None")
@@ -141,9 +149,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
-async def process_users_job(context: CallbackContext):
+
+async def process_users_job(_: CallbackContext):
     log.info("[JOB] Running process_users_with_missing_anilist_id...")
     await asyncio.get_event_loop().run_in_executor(None, main_daemon_job)
+
 
 def init_telegram_bot():
     app = ApplicationBuilder().token(custom_config.BOT_TOKEN).build()
@@ -158,13 +168,22 @@ def init_telegram_bot():
             CommandHandler("status", status_command)
         ],
         states={
-            ASK_ANILIST_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_anilist_username)]
+            ASK_ANILIST_USERNAME: [MessageHandler(
+                filters.TEXT & ~filters.COMMAND, receive_anilist_username)]
         },
         fallbacks=[]
     )
+
+    commands = [
+        BotCommand("help", "Get help"),
+        BotCommand("start", "Create your account into the platform"),
+        BotCommand("status", "Get your user status"),
+        BotCommand("changeusername", "Change your anilist username")
+    ]
+    app.bot.set_my_commands(commands)
     app.add_handler(conv_handler)
     set_bot_commands()
     app.job_queue.run_repeating(process_users_job, interval=60, first=5)
     log.info("Bot avviato...")
-    
+
     app.run_polling()
