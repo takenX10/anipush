@@ -11,7 +11,7 @@ WRITTEN_DATA_FORMAT = ["MANGA", "NOVEL", "ONE_SHOT"]
 MAX_ANIME_PER_QUERY = 25
 MAX_TRIES = 4
 MAX_DATE=int(datetime.datetime(year=3099, month=1, day=1).timestamp())
-
+INTERESTING_ACTIVITIES = ["completed", "plans to watch", "dropped", "watched episode"]
 API_URL = "https://graphql.anilist.co"
 
 def send_request_to_anilist(query:str, variables:dict, title:str)-> dict|None:
@@ -20,7 +20,7 @@ def send_request_to_anilist(query:str, variables:dict, title:str)-> dict|None:
     for i in range(3):
         try:
             time.sleep(4)
-            response = requests.post(API_URL, json={"query": query, "variables": variables})
+            response = requests.post(API_URL, json={"query": query, "variables": variables}, timeout=30)
             if response.status_code == 403:
                 log.warning("\t[!] The anilist api seems unavailiable, returned status code 403.")
                 if i<2:
@@ -42,7 +42,7 @@ def send_request_to_anilist(query:str, variables:dict, title:str)-> dict|None:
                 response.raise_for_status()
             j = response.json()
             if "errors" in j:
-                log.error(f"\t[!] The anilist api returned error(s) in the response")
+                log.error("\t[!] The anilist api returned error(s) in the response")
                 for e in j['errors']:
                     log.error("\t[!] "+json.dumps(e))
                 log.info("\t[i] Retrying in 15 seconds")
@@ -86,8 +86,8 @@ def parse_media(m:dict)->tuple[AnimeData, list[AnimeRelation]] | None:
     if m['title']['english'] is not None and len(m['title']['english']) > 0:
         title = m['title']['english']
     latest_episode = m['episodes']
-    if m['nextAiringEpisode'] is not None:
-        latest_episode = m['nextAiringEpisode']['episode'] or m['episodes']
+    if m['nextAiringEpisode'] is not None and 'episode' in m['nextAiringEpisode'] and m['nextAiringEpisode']['episode'] is not None:
+        latest_episode = m['nextAiringEpisode']['episode'] - 1
     start_date = MAX_DATE
     if m['startDate']['year'] is not None and m['startDate']['month'] is not None and m['startDate']['day'] is not None:
         start_date = int(datetime.datetime(year=m['startDate']['year'], month=m['startDate']['month'], day=m['startDate']['day']).timestamp())
@@ -99,8 +99,8 @@ def parse_media(m:dict)->tuple[AnimeData, list[AnimeRelation]] | None:
         cover=m['coverImage']['extraLarge'] or "",
         episodes=m['episodes'],
         latest_aired_episode=latest_episode,
-        startDate=start_date,
-        updatedDate=m['updatedAt']
+        start_date=start_date,
+        updated_date=m['updatedAt']
     )
     log.debug(f"\t\t[+] Added anime {m['id']} to list")
     if m['relations']['edges'] is None:
@@ -125,11 +125,9 @@ def get_watched_anime(username:str)->list[int]|None:
     if data is None or 'data' not in data or \
         'MediaListCollection' not in data['data'] or \
         'lists' not in data['data']['MediaListCollection']:
-            log.error("The json structure returned by anilist is wrong!")
-            return None
-    
+        log.error("The json structure returned by anilist is wrong!")
+        return None
     lists = data['data']['MediaListCollection']['lists']
-    
     anime_list = []
 
     for l in lists:
@@ -159,8 +157,8 @@ def get_anime_data_from_id(anime_id_list:list[int])->list[tuple[AnimeData, list[
         if data is None or 'data' not in data or \
             'Page' not in data['data'] or \
             'media' not in data['data']['Page']:
-                log.error("\t\t[!] The json structure returned by anilist is wrong!")
-                return None
+            log.error("\t\t[!] The json structure returned by anilist is wrong!")
+            return None
         media_list = data['data']['Page']['media']
         if not media_list or len(media_list) != len(anime_portion):
             log.error("\t\t[!] The returned anilist data is wrong, length does not match!")
@@ -172,17 +170,18 @@ def get_anime_data_from_id(anime_id_list:list[int])->list[tuple[AnimeData, list[
                 if "id" in m:
                     log.error(f"[!] Something went wrong while getting anime data {m['id']}!")
                 else:
-                    log.error(f"[!] Something went wrong while getting anime data (Unkwnown id)!")
+                    log.error("[!] Something went wrong while getting anime data (Unkwnown id)!")
                 continue
             anime_data_list.append(res)
 
     return anime_data_list
-    
-def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]:
+
+def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], list[int], int]:
     log.info(f"\t[.] Getting new user activities user_id:{user_id}, last_activity:{last_activity}")
     current_page = 1
     max_date = last_activity
     new_anime :list[int] = []
+    deleted_media :list[int] = []
     while True:
         variables = {
             "id": user_id,
@@ -195,9 +194,8 @@ def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]
             'pageInfo' not in data['data']['Page'] or \
             'hasNextPage' not in data['data']['Page']['pageInfo'] or \
             'activities' not in data['data']['Page']:
-                log.error("The json structure returned by anilist is wrong!")
-                return [], last_activity
-        
+            log.error("The json structure returned by anilist is wrong!")
+            return [], [], last_activity
         activities = data['data']['Page']['activities']
         for a in activities:
             if 'status' not in a or \
@@ -206,15 +204,22 @@ def get_new_user_activity(user_id:int, last_activity:int)->tuple[list[int], int]
                 'id' not in a['media']:
                 log.debug(f"The json structure of activity {a} returned by anilist is wrong!")
                 continue
-            if a['status'] != 'completed':
+            if a['status'] not in INTERESTING_ACTIVITIES:
+                log.warning(f"[!] Found unhandled activity status {a['status']} for activity {a['id']}, skipping")
                 continue
             if a["createdAt"] > max_date:
                 max_date = a["createdAt"]
-            new_anime.append(a['media']['id'])
+            if a['media']['id'] in deleted_media or a['media']['id'] in new_anime:
+                continue
+            if a['status'] == "completed" or a['status'] == "plans to watch" or a['status'] == 'watched episode':
+                new_anime.append(a['media']['id'])
+            elif a['status'] == "dropped":
+                deleted_media.append(a['media']['id'])
+
         if not data['data']['Page']['pageInfo']['hasNextPage']:
             break
         current_page += 1
-    return new_anime, max_date
+    return new_anime, deleted_media, max_date
 
 def get_new_updates(last_update_time:int, add_each_page:bool)->tuple[list[AnimeData], list[AnimeRelation]]:
     anime_updates_list : dict[int, AnimeData] = {}
@@ -236,15 +241,14 @@ def get_new_updates(last_update_time:int, add_each_page:bool)->tuple[list[AnimeD
             'pageInfo' not in data['data']['Page'] or \
             'hasNextPage' not in data['data']['Page']['pageInfo'] or \
             'media' not in data['data']['Page']:
-                log.error("\t\t[!] The json structure returned by anilist is wrong!")
-                return [], []
-        
+            log.error("\t\t[!] The json structure returned by anilist is wrong!")
+            return [], []
         media_list = data['data']['Page']['media']
         log.debug(f"\t\t[+] Found {len(media_list)} updates to add on page {current_page}")
         if (len(media_list) == 0 or (len(media_list) != 50 and data['data']['Page']['pageInfo']['hasNextPage']))and current_tries <= MAX_TRIES:
-                log.info(f"\t\t[i] Trying to fetch updates for this page a couple more times just to be sure! try {current_tries}/{MAX_TRIES}")
-                current_tries += 1
-                continue
+            log.info(f"\t\t[i] Trying to fetch updates for this page a couple more times just to be sure! try {current_tries}/{MAX_TRIES}")
+            current_tries += 1
+            continue
         else:
             current_tries = 1
 
@@ -264,8 +268,6 @@ def get_new_updates(last_update_time:int, add_each_page:bool)->tuple[list[AnimeD
         if add_each_page:
             add_relations_bulk(relations_list)
             add_anime_bulk(list(anime_updates_list.values()))
-            
-
         if not data['data']['Page']['pageInfo']['hasNextPage']:
             break
         current_page += 1
