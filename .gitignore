@@ -3,3 +3,5 @@ temp
 bot.db
 src/__pycache__
 anipush.db
+venv
+anipush.db-journal
