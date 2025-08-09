@@ -1,0 +1,14 @@
+[Unit]
+Description=Anipush Web - Anime Release Notifier Web app
+After=network.target
+
+[Service]
+ExecStart=/opt/anipush/venv/bin/python3 /opt/anipush/src/web_interface.py
+WorkingDirectory=/opt/anipush/src
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
