@@ -1,3 +1,4 @@
+source /opt/anipush/venv/bin/activate
 git pull origin main
 python3 -m pip install -r requirements.txt
 systemctl stop anipush.service

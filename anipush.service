@@ -3,7 +3,7 @@ Description=Anipush - Anime Release Notifier Bot
 After=network.target
 
 [Service]
-ExecStart=/root/.pyenv/shims/python3.10 /opt/anipush/src/bot.py
+ExecStart=/opt/anipush/venv/bin/python3 /opt/anipush/src/main.py
 WorkingDirectory=/opt/anipush/src
 Restart=always
 RestartSec=5
