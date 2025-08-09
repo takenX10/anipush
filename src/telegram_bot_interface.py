@@ -9,7 +9,6 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
-    BotCommand
 )
 from telegram import Update
 import custom_config
@@ -174,13 +173,6 @@ def init_telegram_bot():
         fallbacks=[]
     )
 
-    commands = [
-        BotCommand("help", "Get help"),
-        BotCommand("start", "Create your account into the platform"),
-        BotCommand("status", "Get your user status"),
-        BotCommand("changeusername", "Change your anilist username")
-    ]
-    app.bot.set_my_commands(commands)
     app.add_handler(conv_handler)
     set_bot_commands()
     app.job_queue.run_repeating(process_users_job, interval=60, first=5)
